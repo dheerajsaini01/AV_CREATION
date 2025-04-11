@@ -1,4 +1,3 @@
-
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { z } from "zod";
@@ -17,18 +16,14 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
-import { createClient } from '@supabase/supabase-js';
-
-// Initialize Supabase client (if available)
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase = supabaseUrl && supabaseKey 
-  ? createClient(supabaseUrl, supabaseKey)
-  : null;
+import axios from "axios";
 
 const formSchema = z.object({
+  fullName:z.string().optional(),
   email: z.string().email("Please enter a valid email address"),
   password: z.string().min(6, "Password must be at least 6 characters"),
+  confirmPassword: z.string().min(6, "Password must be at least 6 characters").optional(),
+  
 });
 
 interface AuthFormProps {
@@ -41,6 +36,8 @@ export default function AuthForm({ userType = "user" }: AuthFormProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
+  const [email,setEmail] = useState("");
+  const [password, setPassword] = useState("");
   
   // Get redirect path from location state
   const from = location.state?.from?.pathname || "/";
@@ -52,100 +49,65 @@ export default function AuthForm({ userType = "user" }: AuthFormProps) {
       password: "",
     },
   });
+  const handleLogin = async ()=>
+    {
+      console.log("login clicked")
+      const res = await axios.post("http://localhost:3000/api/auth/login",{
+        email:email,
+        password:password
+      },{
+         withCredentials: true 
+      });
+
+      const user = await res.data;
+      const token = res.headers['authorization'];
+      if (token) {
+        localStorage.setItem("token", token);
+        axios.defaults.headers.common["Authorization"] = token;
+      }
+      localStorage.setItem("user", JSON.stringify(user));
+      toast({
+        title:"Login successful",
+      });
+      navigate(from === "/auth" ? "/" : from);
+    }
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
+    console.log("login is clicked")
     setIsLoading(true);
     
     try {
-      // Demo mode - we'll simulate auth
-      if (!supabase) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // If it's an admin login, check if email contains "admin"
-        if (userType === "admin" && !values.email.toLowerCase().includes("admin")) {
-          toast({
-            title: "Access denied",
-            description: "This account doesn't have admin privileges.",
-            variant: "destructive",
-          });
-          setIsLoading(false);
-          return;
-        }
-        
-        // For signup, create a new user in localStorage
-        if (mode === "signup") {
-          const newUser = {
-            email: values.email,
-            role: userType === "admin" || values.email.toLowerCase().includes("admin") ? "admin" : "user",
-            profileCompleted: false,
-          };
-          
-          localStorage.setItem("user", JSON.stringify(newUser));
-          
-          toast({
-            title: "Account created",
-            description: "Your account has been created successfully.",
-          });
-          
-          // Redirect to profile completion page
-          navigate("/complete-profile");
-          return;
-        }
-        
-        // For login, create a session
-        const user = {
+      const endpoint = mode === "signup" ? "/api/auth/signup" : "/api/auth/login";
+      const res = await axios.post(
+        `http://localhost:3000${endpoint}`,
+        {
           email: values.email,
-          role: userType === "admin" || values.email.toLowerCase().includes("admin") ? "admin" : "user",
-          profileCompleted: false,
-        };
-        
-        localStorage.setItem("user", JSON.stringify(user));
-        
-        toast({
-          title: "Login successful",
-          description: `Welcome back${userType === "admin" ? " to the admin panel" : ""}!`,
-        });
-        
-        // Redirect to admin panel for admin users
-        if (userType === "admin" || values.email.toLowerCase().includes("admin")) {
-          navigate("/admin");
-        } else {
-          // Redirect back to the page they tried to visit
-          navigate(from === "/auth" ? "/" : from);
-        }
-        
-        return;
+          password: values.password,
+          confirmPassword: mode === "signup" ? values.confirmPassword : undefined,
+          fullName: mode === "signup" ? values.email.split("@")[0] : undefined,
+        },
+        { withCredentials: true }
+      );
+
+      const user = res.data;
+      const token = res.headers['authorization'];
+      if (token) {
+        localStorage.setItem("token", token);
+        axios.defaults.headers.common["Authorization"] = token;
+      }
+      localStorage.setItem("user", JSON.stringify(user));
+
+      toast({
+        title: mode === "signup" ? "Account created" : "Login successful",
+        description: `Welcome${userType === "admin" ? " to the admin panel" : ""}!`,
+      });
+
+      if (userType === "admin" || user.email.includes("admin")) {
+        navigate("/admin");
+      } else {
+        navigate(from === "/auth" ? "/" : from);
       }
       
-      // If Supabase is available, use actual auth
-      if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email: values.email,
-          password: values.password,
-        });
-        
-        if (error) throw error;
-        
-        toast({
-          title: "Account created",
-          description: "Please check your email to verify your account.",
-        });
-        
-      } else {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: values.email,
-          password: values.password,
-        });
-        
-        if (error) throw error;
-        
-        // Success, redirect to admin or home
-        if (data.user?.email?.includes("admin")) {
-          navigate("/admin");
-        } else {
-          navigate(from === "/auth" ? "/" : from);
-        }
-      }
     } catch (error: any) {
       console.error("Authentication error:", error);
       toast({
@@ -167,8 +129,85 @@ export default function AuthForm({ userType = "user" }: AuthFormProps) {
         </TabsList>
         
         <TabsContent value="login" className="space-y-4">
+          <div>
+            <div>
+              <h2 className="font-medium">Email</h2>
+              <input onChange={(e)=>{
+              setEmail(e.target.value)
+            }} type="text" placeholder="your.email@example.com" className="border mt-2 mb-5 w-full p-2 bg-[#FCFAF8] rounded-sm" />
+            </div>
+            <div>
+              <h2 className="font-medium">Password</h2>
+              <input onChange={(e)=>{
+            setPassword(e.target.value)
+          }} type="password" placeholder="••••••" className="border mt-2 w-full bg-[#FCFAF8] p-2 rounded-sm"/>
+            </div>
+            <div>
+              <button className="w-full mt-4 bg-[#A16E34] p-2 rounded-sm text-white" onClick={handleLogin}>Login</button>
+
+            </div>
+          </div>
+          
+          
+          {/* <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <FormField
+                control={form.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input  placeholder="your.email@example.com" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              <FormField
+                control={form.control}
+                name="password"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Password</FormLabel>
+                    <FormControl>
+                      <Input  type="password" placeholder="••••••" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              
+              <button type="submit" onClick={}  className="w-full" disabled={isLoading}>
+                {isLoading ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Logging in...</>
+                ) : (
+                  'Login'
+                )}
+              </button>
+            </form>
+          </Form> */}
+        </TabsContent>
+        
+        <TabsContent value="signup" className="space-y-4">
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+
+            <FormField
+                control={form.control}
+                name="fullName"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Full Name</FormLabel>
+                    <FormControl>
+                      <Input type="text" placeholder="Full Name" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
               <FormField
                 control={form.control}
                 name="email"
@@ -196,41 +235,12 @@ export default function AuthForm({ userType = "user" }: AuthFormProps) {
                   </FormItem>
                 )}
               />
-              
-              <Button type="submit" className="w-full" disabled={isLoading}>
-                {isLoading ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Logging in...</>
-                ) : (
-                  'Login'
-                )}
-              </Button>
-            </form>
-          </Form>
-        </TabsContent>
-        
-        <TabsContent value="signup" className="space-y-4">
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField
                 control={form.control}
-                name="email"
+                name="confirmPassword"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Email</FormLabel>
-                    <FormControl>
-                      <Input placeholder="your.email@example.com" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              
-              <FormField
-                control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Password</FormLabel>
+                    <FormLabel>Confirm Password</FormLabel>
                     <FormControl>
                       <Input type="password" placeholder="••••••" {...field} />
                     </FormControl>
